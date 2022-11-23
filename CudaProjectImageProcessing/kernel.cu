@@ -176,22 +176,22 @@ void print_image(uint8_t* const image, const int width, const int height, const 
 		printf("\n");
 	}
 }
-
-int main() {
-	int width, height, bpp;
-	uint8_t* rgb_image = stbi_load("test/tower_of_pisa.jpg", &width, &height, &bpp, 0);
-	uint8_t* output_image = (uint8_t*)malloc(width * height * bpp * sizeof(uint8_t));
-
-	printf("%d %d %d\n", width, height, bpp);
-
-	histogram_equalization(rgb_image, width, height, bpp, output_image);
-
-	stbi_image_free(rgb_image);
-	stbi_write_png("output_histogram_equ.png", width, height, bpp, output_image, width * bpp);
-
-	free(output_image);
-	return 0;
-}
+//
+//int main() {
+//	int width, height, bpp;
+//	uint8_t* rgb_image = stbi_load("test/tower_of_pisa.jpg", &width, &height, &bpp, 0);
+//	uint8_t* output_image = (uint8_t*)malloc(width * height * bpp * sizeof(uint8_t));
+//
+//	printf("%d %d %d\n", width, height, bpp);
+//
+//	histogram_equalization(rgb_image, width, height, bpp, output_image);
+//
+//	stbi_image_free(rgb_image);
+//	stbi_write_png("output_histogram_equ.png", width, height, bpp, output_image, width * bpp);
+//
+//	free(output_image);
+//	return 0;
+//}
 
 //
 //cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
@@ -321,4 +321,428 @@ int main() {
 //    cudaFree(dev_b);
 //    
 //    return cudaStatus;
+//}
+
+#include <math.h>
+#include "cufft.h"
+#include "cufftXt.h"
+
+// Pad data
+__global__ void PadData(const cufftComplex* signal, cufftComplex** padded_signal, int signal_size,
+	const cufftComplex* filter_kernel, cufftComplex** padded_filter_kernel,
+	int filter_kernel_size) {
+	int minRadius = filter_kernel_size / 2;
+	int maxRadius = filter_kernel_size - minRadius;
+	int new_size = signal_size + maxRadius;
+
+	// Pad signal
+	cufftComplex* new_data =
+		reinterpret_cast<cufftComplex*>(malloc(sizeof(cufftComplex) * new_size));
+	memcpy(new_data + 0, signal, signal_size * sizeof(cufftComplex));
+	memset(new_data + signal_size, 0, (new_size - signal_size) * sizeof(cufftComplex));
+	*padded_signal = new_data;
+
+	// Pad filter
+	new_data = reinterpret_cast<cufftComplex*>(malloc(sizeof(cufftComplex) * new_size));
+	memcpy(new_data + 0, filter_kernel + minRadius, maxRadius * sizeof(cufftComplex));
+	memset(new_data + maxRadius, 0,
+		(new_size - filter_kernel_size) * sizeof(cufftComplex));
+	memcpy(new_data + new_size - minRadius, filter_kernel,
+		minRadius * sizeof(cufftComplex));
+	*padded_filter_kernel = new_data;
+}
+
+
+__global__ void pointwise_product(cufftComplex* a, cufftComplex* b, float size, float weight)
+{
+	unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+	if(i > size)
+		return;
+
+	printf("[%d] a: %f + %fi, b: %f + %fi\n", i, a[i].x, a[i].y, b[i].x, b[i].y);
+
+	float aReal_bk = a[i].x;
+	a[i].x = a[i].x * b[i].x - a[i].y * b[i].y;
+	a[i].y = aReal_bk * b[i].y + a[i].y * b[i].x;
+	a[i].x *= weight;
+	a[i].y *= weight;
+}
+
+__global__ void printComplex(cufftComplex* a, int input_width, int input_height)
+{
+	for (int row = 0; row < input_height; row++)
+	{
+		for (int col = 0; col < input_width; col++)
+		{
+			printf("%.1f,%.1f ", a[row * input_width + col].x, a[row * input_width + col].y);
+		}
+		printf("\n");
+	}
+}
+
+
+void blur(uint8_t* const image, const int width, const int height, const int bpp, uint8_t* output)
+{
+	const int input_width = width;
+	const int input_height = height;
+	const int kernel_width = 32;
+	const int kernel_height = 32;
+
+	float* A = new float[input_width * input_height];
+	for (int i = 0; i < height; i++)
+	{
+		for (int j = 0; j < width; j++)
+		{
+			A[i * width + j] = image[i * width + j];
+			printf("%.1f ", A[i * width + j]);
+		}
+		printf("\n");
+	}
+
+	float B[32][32] = {
+		{0.112, 0.112, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0.112},
+		{0.112, 0.112, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0.112},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		 																									
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		 																									
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		 																									
+		{0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0},
+		{0.112, 0.112, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0, 0, 0, 0,  0, 0.112},
+	};
+
+	cufftReal* d_inA, * d_inB;
+	cufftComplex* d_outA, * d_outB;
+
+	size_t real_size = input_width * input_height * sizeof(cufftReal);
+	size_t complex_size = input_width * (input_height / 2 + 1) * sizeof(cufftComplex);
+
+	cudaMalloc((void**)&d_inA, real_size);
+	cudaMalloc((void**)&d_inB, real_size);
+
+	cudaMalloc((void**)&d_outA, complex_size);
+	cudaMalloc((void**)&d_outB, complex_size);
+
+	cudaMemset(d_inA, 0, real_size);
+	cudaMemset(d_inB, 0, real_size);
+
+	cudaMemcpy(d_inA, A, real_size, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_inB, B, real_size, cudaMemcpyHostToDevice);
+
+
+
+	cufftHandle fwplanA, fwplanB, bwplan;
+	cufftPlan2d(&fwplanA, input_height, input_width, CUFFT_R2C);
+	cufftPlan2d(&fwplanB, kernel_height, kernel_width, CUFFT_R2C);
+	cufftPlan2d(&bwplan, input_height, input_width, CUFFT_C2R);
+
+	cufftExecR2C(fwplanA, d_inA, d_outA);
+	cufftExecR2C(fwplanB, d_inB, d_outB);
+
+
+
+	printComplex<<<1, 1>>>(d_outB, input_width, input_height);
+	
+	//////////////
+	// why 1/2 of real? : because the half of complex is conjugates. so, it's not necessary to keep these.
+	/////////////
+	int blocksx = ceil((input_width * (input_height / 2 + 1)) / 256.0f);
+	dim3 threads(256);
+	dim3 grid(blocksx);
+	// One complex product for each thread, scaled by the inverse of the
+	// number of elements involved in the FFT
+	pointwise_product << <grid, threads >> > (d_outA, d_outB, input_width * (input_height / 2 + 1), 1.0f / ((input_width * input_height)));
+
+	cufftExecC2R(bwplan, d_outA, d_inA);
+
+
+	cufftReal* result = new cufftReal[input_width * 2 * (input_height/2+1)];
+	cudaMemcpy(result, d_inA, real_size, cudaMemcpyDeviceToHost);
+
+	// Print result...
+
+	//for (int row = 0; row < input_height; row++)
+	//{
+	//	for (int col = 0; col < input_width; col++)
+	//	{
+	//		printf("%f ", result[row * input_width + col]);
+	//	}
+	//	printf("\n");
+	//}
+	for (int row = 0; row < input_height; row++)
+	{
+		for (int col = 0; col < input_width; col++)
+		{
+			printf("%.2f ", result[row * input_width + col]);
+		}
+		printf("\n");
+	}
+
+
+	for (int row = 0; row < input_height; row++)
+	{
+		for (int col = 0; col < input_width; col++)
+		{
+			output[row * input_width + col] = static_cast<uint8_t>(result[row * input_width + col]);
+			printf("%d ", output[row * input_width + col]);
+		}
+		printf("\n");
+	}
+
+	// Free memory...
+
+	cudaFree(d_inA);
+	cudaFree(d_inB);
+	cudaFree(d_outA);
+	cudaFree(d_outB);
+
+	delete A;
+	delete result;
+}
+
+int main() 
+{
+	int width, height, bpp;
+	uint8_t* rgb_image = stbi_load("test/tiny_grayscale.png", &width, &height, &bpp, 0);
+	uint8_t* output_image = (uint8_t*)malloc(width * height * bpp * sizeof(uint8_t));
+	
+	printf("%d %d %d\n", width, height, bpp);
+	
+	blur(rgb_image, width, height, bpp, output_image);
+	
+	stbi_image_free(rgb_image);
+	stbi_write_png("output_cufft.png", width, height, bpp, output_image, width * bpp);
+	
+	free(output_image);
+	return 0;
+
+	
+}
+//
+//int main()
+//{
+//	const int input_width = 5;
+//	const int input_height = 4;
+//	const int kernel_width = 5;
+//	const int kernel_height = 4;
+//
+//	float A[4][5] = { {0,0,0,0,0},
+//		{0,1,1,1,0},
+//		{0,1,1,1,0},
+//		{0,0,0,0,0} };
+//
+//	//Central element of the kernel in the (0,0) position of the array.
+//	float B[4][5] = { {0.112, 0.112,  0,    0,  0.112},
+//			{0.112  ,  0.112  ,  0,    0,  0.112},
+//			{0  ,  0  ,  0,    0,  0},
+//			{0.112  ,  0.112  ,  0,    0,  0.112} };
+//
+//	cufftReal* d_inA, * d_inB;
+//	cufftComplex* d_outA, * d_outB;
+//
+//	size_t real_size = input_width * input_height * sizeof(cufftReal);
+//	size_t complex_size = input_width * (input_height / 2 + 1) * sizeof(cufftComplex);
+//
+//	cudaMalloc((void**)&d_inA, real_size);
+//	cudaMalloc((void**)&d_inB, real_size);
+//
+//	cudaMalloc((void**)&d_outA, complex_size);
+//	cudaMalloc((void**)&d_outB, complex_size);
+//
+//	cudaMemset(d_inA, 0, real_size);
+//	cudaMemset(d_inB, 0, real_size);
+//
+//	cudaMemcpy(d_inA, A, real_size, cudaMemcpyHostToDevice);
+//	cudaMemcpy(d_inB, B, real_size, cudaMemcpyHostToDevice);
+//
+//
+//
+//	cufftHandle fwplanA, fwplanB, bwplan;
+//	cufftPlan2d(&fwplanA, input_height, input_width, CUFFT_R2C);
+//	cufftPlan2d(&fwplanB, kernel_height, kernel_width, CUFFT_R2C);
+//	cufftPlan2d(&bwplan, input_height, input_width, CUFFT_C2R);
+//
+//	cufftExecR2C(fwplanA, d_inA, d_outA);
+//	cufftExecR2C(fwplanB, d_inB, d_outB);
+//
+//
+//
+//	printComplex << <1, 1 >> > (d_outB, input_width, input_height);
+//
+//
+//	int blocksx = ceil((input_width * (input_height / 2 + 1)) / 256.0f);
+//	dim3 threads(256);
+//	dim3 grid(blocksx);
+//	// One complex product for each thread, scaled by the inverse of the
+//	// number of elements involved in the FFT
+//	pointwise_product << <grid, threads >> > (d_outA, d_outB, input_width * (input_height / 2 + 1), 1.0f / ((input_width * input_height)));
+//
+//	cufftExecC2R(bwplan, d_outA, d_inA);
+//
+//
+//	cufftReal* result = new cufftReal[input_width * 2 * (input_height / 2 + 1)];
+//	cudaMemcpy(result, d_inA, real_size, cudaMemcpyDeviceToHost);
+//
+//	// Print result...
+//
+//	//for (int row = 0; row < input_height; row++)
+//	//{
+//	//	for (int col = 0; col < input_width; col++)
+//	//	{
+//	//		printf("%f ", result[row * input_width + col]);
+//	//	}
+//	//	printf("\n");
+//	//}
+//	for (int row = 0; row < input_height; row++)
+//	{
+//		for (int col = 0; col < input_width; col++)
+//		{
+//			printf("%.2f ", result[row * input_width + col]);
+//		}
+//		printf("\n");
+//	}
+//
+//	uint8_t* output;
+//	output = new uint8_t[5 * 4];
+//
+//	for (int row = 0; row < input_height; row++)
+//	{
+//		for (int col = 0; col < input_width; col++)
+//		{
+//			output[row * input_width + col] = static_cast<uint8_t>(result[row * input_width + col]);
+//			printf("%d ", output[row * input_width + col]);
+//		}
+//		printf("\n");
+//	}
+//
+//	// Free memory...
+//
+//	cudaFree(d_inA);
+//	cudaFree(d_inB);
+//	cudaFree(d_outA);
+//	cudaFree(d_outB);
+//
+//	delete result;
+//}
+
+//
+//__global__ void ComplexMUL(cufftComplex* a, cufftComplex* b)
+//{
+//	int i = threadIdx.x + blockIdx.x * blockDim.x;
+//	a[i].x = a[i].x * b[i].x - a[i].y * b[i].y;
+//	a[i].y = a[i].x * b[i].y + a[i].y * b[i].x;
+//	a[i].x /= 25;
+//	a[i].y /= 25;
+//}
+//
+//#include <iostream>
+//
+//int main()
+//{
+//	using namespace std;
+//
+//	int N = 5;
+//	int SIZE = N * N;
+//
+//
+//	cufftComplex* fg = new cufftComplex[SIZE];
+//	for (int i = 0; i < SIZE; i++) {
+//		fg[i].x = rand() % 5;
+//		fg[i].y = 0;
+//	}
+//	cufftComplex fig[25] = {
+//		{0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0},
+//		{0, 0}, {1, 0}, {1, 0}, {1, 0}, {0, 0},
+//		{0, 0}, {1, 0}, {0, 0}, {1, 0}, {0, 0},
+//		{0, 0}, {1, 0}, {1, 0}, {1, 0}, {0, 0},
+//		{0, 0}, {0, 0}, {0, 0}, {0, 0}, {0, 0}
+//	};
+//	for (int i = 0; i < N * N; i = i + N)
+//	{
+//		for (int j = 0; j < N; j++) {
+//			cout << fg[i + j].x << " ";
+//		}
+//		cout << endl;
+//	}
+//	cout << "----------------" << endl;
+//	for (int i = 0; i < N * N; i = i + N)
+//	{
+//		for (int j = 0; j < N; j++) {
+//			cout << fig[i + j].x << " ";
+//		}
+//		cout << endl;
+//	}
+//	cout << "----------------" << endl;
+//
+//	int mem_size = sizeof(cufftComplex) * SIZE;
+//
+//
+//	cufftComplex* d_signal;
+//	(cudaMalloc((void**)&d_signal, mem_size));
+//	(cudaMemcpy(d_signal, fg, mem_size, cudaMemcpyHostToDevice));
+//
+//	cufftComplex* d_filter_kernel;
+//	(cudaMalloc((void**)&d_filter_kernel, mem_size));
+//	(cudaMemcpy(d_filter_kernel, fig, mem_size, cudaMemcpyHostToDevice));
+//
+//	// cout << d_signal[1].x << endl;
+//	// CUFFT plan
+//	cufftHandle plan;
+//	cufftPlan2d(&plan, N, N, CUFFT_C2C);
+//
+//	// Transform signal and filter
+//	printf("Transforming signal cufftExecR2C\n");
+//	cufftExecC2C(plan, (cufftComplex*)d_signal, (cufftComplex*)d_signal, CUFFT_FORWARD);
+//	cufftExecC2C(plan, (cufftComplex*)d_filter_kernel, (cufftComplex*)d_filter_kernel, CUFFT_FORWARD);
+//
+//	printf("Launching Complex multiplication<<< >>>\n");
+//	ComplexMUL << < N, N >> > (d_signal, d_filter_kernel);
+//
+//	// Transform signal back
+//	printf("Transforming signal back cufftExecC2C\n");
+//	cufftExecC2C(plan, (cufftComplex*)d_signal, (cufftComplex*)d_signal, CUFFT_INVERSE);
+//
+//	cufftComplex* result = new cufftComplex[SIZE];
+//	cudaMemcpy(result, d_signal, sizeof(cufftComplex) * SIZE, cudaMemcpyDeviceToHost);
+//
+//	for (int i = 0; i < SIZE; i = i + N)
+//	{
+//		for (int j = 0; j < N; j++) {
+//			cout << result[i + j].x << " ";
+//		}
+//		cout << endl;
+//	}
+//
+//	delete result, fg, fig;
+//	cufftDestroy(plan);
+//	//cufftDestroy(plan2);
+//	cudaFree(d_signal);
+//	cudaFree(d_filter_kernel);
+//
 //}
