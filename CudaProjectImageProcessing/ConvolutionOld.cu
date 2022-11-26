@@ -137,7 +137,7 @@ __global__ void pad_kernel(cufftReal* kernel_input, const int image_width, const
 	if (is_x_left && is_y_up)
 	{
 		int offset = (min_radius + y) * kernel_size + (min_radius + x);
-		//printf("[%d] %d\n", thread_index, offset);
+		printf("[%d] %d\n", thread_index, offset);
 		kernel_output[thread_index] = kernel_input[offset];
 		return;
 	}
@@ -145,7 +145,7 @@ __global__ void pad_kernel(cufftReal* kernel_input, const int image_width, const
 	if (is_x_right && is_y_up)
 	{
 		int offset = (min_radius + y) * kernel_size + (x - (image_width - min_radius));
-		//printf("[%d] %d\n", thread_index, offset);
+		printf("[%d] %d\n", thread_index, offset);
 		kernel_output[thread_index] = kernel_input[offset];
 		return;
 	}
@@ -153,7 +153,7 @@ __global__ void pad_kernel(cufftReal* kernel_input, const int image_width, const
 	if (is_x_left && is_y_down)
 	{
 		int offset = (y - (image_height - min_radius)) * kernel_size + (min_radius + x);
-		//printf("[%d] %d\n", thread_index, offset);
+		printf("[%d] %d\n", thread_index, offset);
 		kernel_output[thread_index] = kernel_input[offset];
 		return;
 	}
@@ -161,7 +161,7 @@ __global__ void pad_kernel(cufftReal* kernel_input, const int image_width, const
 	if (is_x_right && is_y_down)
 	{
 		int offset = (y - (image_height - min_radius)) * kernel_size + (x - (image_width - min_radius));
-		//printf("[%d] %d\n", thread_index, offset);
+		printf("[%d] %d\n", thread_index, offset);
 		kernel_output[thread_index] = kernel_input[offset];
 		return;
 	}
@@ -188,6 +188,36 @@ __global__ void pointwise_product(cufftComplex* a, cufftComplex* b, int size, fl
 	//printf("[%d] = (%f, %f)\n", thread_index, a[thread_index].x, a[thread_index].y);
 }
 
+__global__ void correct_consistency(cufftComplex* complex, const int real_width, const int real_height)
+{
+	printf("\n correcting consistency: original value was: \n");
+	printf("complex : %f\n", complex[0].y);
+	complex[0].y = 0.f;
+	const int size = real_width * real_height;
+	if (size % 2 == 0)
+	{
+		printf("complex : %f\n", complex[size / 2].y);
+		complex[size / 2].y = 0.f;
+
+
+	}
+}
+
+__global__ void print_2d_complex(cufftComplex* d_arr, int width, int height)
+{
+	for (int i = 0; i < height; i++)
+	{
+		//printf("%d: ", i);
+		for (int j = 0; j < width; j++)
+		{
+			//printf("%4d", j);
+			printf("(%3.1f, %3.1f) ", d_arr[i * width + j].x, d_arr[i * width + j].y);
+		}
+		printf("\n");
+	}
+	printf("\n");
+}
+
 __global__ void print_2d_real(cufftReal* d_arr, int width, int height)
 {
 	for (int i = 0; i < height; i++)
@@ -196,7 +226,7 @@ __global__ void print_2d_real(cufftReal* d_arr, int width, int height)
 		for (int j = 0; j < width; j++)
 		{
 			//printf("%4d", j);
-			printf("%3.1f ", d_arr[i * width + j]);
+			printf("%2.3f ", d_arr[i * width + j]);
 		}
 		printf("\n");
 	}
@@ -218,7 +248,7 @@ void ConvolutionCalculator::convolution(
 	const int image_real_size = image_width * image_height;
 	const int kernel_size = kernel_width * kernel_height;
 
-	const int complex_size = image_width * (image_height / 2 + 1);
+	const int complex_size = (image_width / 2 + 1) * image_height;
 
 	uint8_t* d_int8_image = nullptr;
 	checkCudaErrors(cudaMalloc((void**)&d_int8_image, image_size * sizeof(uint8_t)));
@@ -228,13 +258,11 @@ void ConvolutionCalculator::convolution(
 
 	cufftReal* d_real_kernel = nullptr;
 	checkCudaErrors(cudaMalloc((void**)&d_real_kernel, kernel_size * sizeof(cufftReal)));
-	//create_in_device<cufftReal> << <1, 1 >> > (&d_real_kernel, kernel_size);
 
 	checkCudaErrors(cudaMemcpy(d_real_kernel, kernel, kernel_size * sizeof(cufftReal), cudaMemcpyHostToDevice));
 
 	cufftReal* d_real_kernel_padded = nullptr;
 	checkCudaErrors(cudaMalloc((void**)&d_real_kernel_padded, image_real_size * sizeof(cufftReal)));
-	//create_in_device<cufftReal> << <1, 1 >> > (&d_real_kernel_padded, image_real_size);
 
 	checkCudaErrors(cudaDeviceSynchronize());
 
@@ -255,27 +283,23 @@ void ConvolutionCalculator::convolution(
 
 	cufftComplex* d_complex_kernel = nullptr;
 	checkCudaErrors(cudaMalloc((void**)&d_complex_kernel, complex_size * sizeof(cufftComplex)));
-	//create_in_device<cufftComplex> << <1, 1 >> > (&d_complex_kernel, complex_size);
 	cufftExecR2C(plan_kernel_to_complex, d_real_kernel_padded, d_complex_kernel);
+	checkCudaErrors(cudaDeviceSynchronize());
 
 	for (int i = 0; i < bpp; i++)
 	{
 		cufftReal* d_real_image = nullptr;
 
 		checkCudaErrors(cudaMalloc((void**)&d_real_image, image_real_size * sizeof(cufftReal)));
-		//create_in_device<cufftReal> << <1, 1 >> > (&d_real_image, image_real_size);
 
-		collect_data<<<grid, threads>>>(d_int8_image, bpp, i, image_real_size, d_real_image);
-
+		collect_data << <grid, threads >> > (d_int8_image, bpp, i, image_real_size, d_real_image);
 		checkCudaErrors(cudaDeviceSynchronize());
-		//print_2d_real << <1, 1 >> > (d_real_image, image_width, image_height);
 
 		cufftComplex* d_complex_image = nullptr;
 
 		checkCudaErrors(cudaMalloc((void**)&d_complex_image, complex_size * sizeof(cufftComplex)));
 		checkCudaErrors(cudaMemset(d_complex_image, 0, complex_size * sizeof(cufftComplex)));
 		checkCudaErrors(cudaDeviceSynchronize());
-		//create_in_device<cufftComplex> << <1, 1 >> > (&d_complex_image, complex_size);
 
 		cufftHandle plan_image_to_complex, plan_result_to_real;
 		checkCudaErrors(cufftPlan2d(&plan_image_to_complex, image_height, image_width, CUFFT_R2C));
@@ -292,6 +316,10 @@ void ConvolutionCalculator::convolution(
 		pointwise_product << <multiplication_grid, multiplication_threads >> > (d_complex_image, d_complex_kernel, complex_size, 1.0f / (image_width * image_height));
 		checkCudaErrors(cudaDeviceSynchronize());
 
+		//print_2d_complex << <1, 1 >> > (d_complex_image, image_width, image_height);
+
+		//correct_consistency << <1, 1 >> > (d_complex_image, image_width, image_height);
+
 		checkCudaErrors(cufftExecC2R(plan_result_to_real, d_complex_image, d_real_image));
 		checkCudaErrors(cudaDeviceSynchronize());
 
@@ -302,8 +330,6 @@ void ConvolutionCalculator::convolution(
 
 		cudaFree(d_real_image);
 		cudaFree(d_complex_image);
-		/*destroy_in_device << <1, 1 >> > (d_real_image);
-		destroy_in_device << <1, 1 >> > (d_complex_image);*/
 
 		cufftDestroy(plan_image_to_complex);
 		cufftDestroy(plan_result_to_real);
