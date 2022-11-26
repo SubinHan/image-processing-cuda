@@ -513,7 +513,7 @@ __global__ void printComplex(cufftComplex* a, int input_width, int input_height)
 int main() 
 {
 	int width, height, bpp;
-	uint8_t* rgb_image = stbi_load("test/tiny_color.png", &width, &height, &bpp, 0);
+	uint8_t* rgb_image = stbi_load("test/variable_color.png", &width, &height, &bpp, 0);
 	uint8_t* output_image = (uint8_t*)malloc(width * height * bpp * sizeof(uint8_t));
 	
 	printf("%d %d %d\n", width, height, bpp);
@@ -539,7 +539,7 @@ int main()
 		{0.1112, 0.11112, 0.11112}
 	};
 
-	double kernel5[5][5]{
+	float kernel5[5][5]{
 		{0.04, 0.04, 0.04, 0.04, 0.04},
 		{0.04, 0.04, 0.04, 0.04, 0.04},
 		{0.04, 0.04, 0.04, 0.04, 0.04},
