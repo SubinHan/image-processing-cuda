@@ -107,7 +107,10 @@ __global__ void write_data_to_image(uint8_t* image, int bpp, int offset, int siz
 	if (thread_index > size)
 		return;
 
-	if (data[thread_index] >= 255.f)
+	if (data[thread_index] < 0.f)
+		data[thread_index] = 0.f;
+
+	if (data[thread_index] > 255.f)
 		data[thread_index] = 255.f;
 	image[thread_index * bpp + offset] = data[thread_index];
 }
@@ -137,7 +140,7 @@ __global__ void pad_kernel(cufftReal* kernel_input, const int image_width, const
 	if (is_x_left && is_y_up)
 	{
 		int offset = (min_radius + y) * kernel_size + (min_radius + x);
-		printf("[%d] %d\n", thread_index, offset);
+		//printf("[%d] %d\n", thread_index, offset);
 		kernel_output[thread_index] = kernel_input[offset];
 		return;
 	}
@@ -145,7 +148,7 @@ __global__ void pad_kernel(cufftReal* kernel_input, const int image_width, const
 	if (is_x_right && is_y_up)
 	{
 		int offset = (min_radius + y) * kernel_size + (x - (image_width - min_radius));
-		printf("[%d] %d\n", thread_index, offset);
+		//printf("[%d] %d\n", thread_index, offset);
 		kernel_output[thread_index] = kernel_input[offset];
 		return;
 	}
@@ -153,7 +156,7 @@ __global__ void pad_kernel(cufftReal* kernel_input, const int image_width, const
 	if (is_x_left && is_y_down)
 	{
 		int offset = (y - (image_height - min_radius)) * kernel_size + (min_radius + x);
-		printf("[%d] %d\n", thread_index, offset);
+		//printf("[%d] %d\n", thread_index, offset);
 		kernel_output[thread_index] = kernel_input[offset];
 		return;
 	}
@@ -161,7 +164,7 @@ __global__ void pad_kernel(cufftReal* kernel_input, const int image_width, const
 	if (is_x_right && is_y_down)
 	{
 		int offset = (y - (image_height - min_radius)) * kernel_size + (x - (image_width - min_radius));
-		printf("[%d] %d\n", thread_index, offset);
+		//printf("[%d] %d\n", thread_index, offset);
 		kernel_output[thread_index] = kernel_input[offset];
 		return;
 	}
@@ -190,13 +193,13 @@ __global__ void pointwise_product(cufftComplex* a, cufftComplex* b, int size, fl
 
 __global__ void correct_consistency(cufftComplex* complex, const int real_width, const int real_height)
 {
-	printf("\n correcting consistency: original value was: \n");
-	printf("complex : %f\n", complex[0].y);
+	//printf("\n correcting consistency: original value was: \n");
+	//printf("complex : %f\n", complex[0].y);
 	complex[0].y = 0.f;
 	const int size = real_width * real_height;
 	if (size % 2 == 0)
 	{
-		printf("complex : %f\n", complex[size / 2].y);
+	//	printf("complex : %f\n", complex[size / 2].y);
 		complex[size / 2].y = 0.f;
 
 
@@ -233,7 +236,7 @@ __global__ void print_2d_real(cufftReal* d_arr, int width, int height)
 	printf("\n");
 }
 
-void ConvolutionCalculator::convolution(
+void ConvolutionCalculator::convolution_cufft(
 	const uint8_t* image_in,
 	const float* kernel,
 	const int image_width,
@@ -312,7 +315,7 @@ void ConvolutionCalculator::convolution(
 		dim3 multiplication_threads(256);
 		dim3 multiplication_grid(multiplication_blocksx);
 		//std::cout << multiplication_grid.x << multiplication_grid.y << multiplication_grid.z << multiplication_threads.x << multiplication_threads.y << multiplication_threads.z;
-		printf("%f", 1.0f / (image_width * image_height));
+		//printf("%f", 1.0f / (image_width * image_height));
 		pointwise_product << <multiplication_grid, multiplication_threads >> > (d_complex_image, d_complex_kernel, complex_size, 1.0f / (image_width * image_height));
 		checkCudaErrors(cudaDeviceSynchronize());
 
@@ -348,4 +351,101 @@ void ConvolutionCalculator::convolution(
 	//destroy_in_device << <1, 1 >> > (d_int8_image);
 
 	checkCudaErrors(cudaPeekAtLastError());
+}
+
+__device__ int d_max(int a, int b)
+{
+	if (a > b)
+		return a;
+	return b;
+}
+
+__device__ int d_min(int a, int b)
+{
+	if (a > b)
+		return b;
+	return a;
+}
+
+
+__global__ void conv_naive(
+	const uint8_t* input, 
+	const float* kernel, 
+	const int width, 
+	const int height,
+	const int kernel_size, 
+	const int bpp, 
+	const int channel, 
+	uint8_t* output) {
+	float sum = 0;
+	//printf("%d\n", width * height * bpp);
+	const int size = width * height;
+
+	unsigned thread_index = blockIdx.x * blockDim.x + threadIdx.x;
+
+	const int x = thread_index % width;
+	const int y = thread_index / width;
+
+	if (thread_index >= size)
+		return;
+
+	//printf("[%d]((%d, %d))\n", thread_index, x, y);
+
+	for (int k_row = - kernel_size / 2; k_row <= kernel_size / 2; k_row++) {
+		for (int k_col = -kernel_size / 2; k_col <= kernel_size / 2; k_col++) {
+			int offset = (k_row + kernel_size / 2) * kernel_size + k_col + kernel_size / 2;
+			int x_index = x + k_col;
+			if (x_index < 0 || x_index >= width)
+				continue;
+
+			int y_index = y + k_row;
+			if (y_index < 0 || y_index >= height)
+				continue;
+
+			int image_offset = x_index + y_index * width;
+			//if (image_offset < 0 || image_offset >= size)
+			//	continue;
+			
+			sum += kernel[offset] * (float)(input[image_offset * bpp + channel]);
+		}
+	}
+	output[thread_index * bpp + channel] = sum;
+}
+
+void ConvolutionCalculator::convolution_naive(
+	const uint8_t* image_in, 
+	const float* kernel, 
+	const int image_width, 
+	const int image_height, 
+	const int kernel_width, 
+	const int kernel_height, 
+	const int bpp, 
+	uint8_t* image_out)
+{
+	uint8_t* d_input_image = nullptr;
+	uint8_t* d_output_image = nullptr;
+	float* d_kernel = nullptr;
+	const int image_size = image_width * image_height;
+
+	cudaMalloc((void**)&d_input_image, sizeof(uint8_t) * image_size * bpp);
+	cudaMalloc((void**)&d_output_image, sizeof(uint8_t) * image_size * bpp);
+	cudaMalloc((void**)&d_kernel, sizeof(float) * kernel_width * kernel_height);
+
+	//printf("ImageSize: %d", image_size * bpp);
+
+	checkCudaErrors(cudaMemcpy(d_input_image, image_in, sizeof(uint8_t) * image_size * bpp, cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMemcpy(d_kernel, kernel, sizeof(float) * kernel_width * kernel_height, cudaMemcpyHostToDevice));
+
+	int blocksx = ceil((image_size) / 256.0f);
+	dim3 threads(256);
+	dim3 grid(blocksx);
+
+	for (int i = 0; i < bpp; i++) {
+		conv_naive << <grid, threads>> > (d_input_image, d_kernel, image_width, image_height, kernel_width, bpp, i, d_output_image);
+	}
+
+	checkCudaErrors(cudaDeviceSynchronize());
+	cudaMemcpy(image_out, d_output_image, sizeof(uint8_t) * image_height * image_width * bpp, cudaMemcpyDeviceToHost);
+
+	cudaFree(d_input_image);
 }

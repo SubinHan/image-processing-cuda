@@ -509,11 +509,18 @@ __global__ void printComplex(cufftComplex* a, int input_width, int input_height)
 //
 
 #include "ConvolutionOld.cuh"
+#include "Timer.h"
 
 int main() 
 {
+	const char* path_8k = "test/8K-Background_7680x4320.jpg";
+	const char* path_4k = "4k_Elden Ring_3840x2160.jpg";
+	const char* path_fhd = "test/minecraft_1920x1080.jpg";
+	const char* path_small = "test/tower_of_pisa.jpg";
+	const char* path_tiny = "test/tiny_color.png";
+
 	int width, height, bpp;
-	uint8_t* rgb_image = stbi_load("test/tower_of_pisa_almost_square.jpg", &width, &height, &bpp, 0);
+	uint8_t* rgb_image = stbi_load(path_8k, &width, &height, &bpp, 0);
 	uint8_t* output_image = (uint8_t*)malloc(width * height * bpp * sizeof(uint8_t));
 	
 	printf("%d %d %d\n", width, height, bpp);
@@ -533,23 +540,68 @@ int main()
 	//	printf("\n");
 	//}
 
-	float kernel[3][3]{
+	float blur3[3][3]{
 		{0.11112, 0.11112, 0.11112},
 		{0.11112, 0.11112, 0.11112},
 		{0.1112, 0.11112, 0.11112}
 	};
 
-	float kernel5[5][5]{
+	float edge3[3][3]{
+		{-1, -2, -1},
+		{-2, 12, -2},
+		{-1, -2, -1},
+	};
+
+	float blur5[5][5]{
 		{0.04, 0.04, 0.04, 0.04, 0.04},
 		{0.04, 0.04, 0.04, 0.04, 0.04},
 		{0.04, 0.04, 0.04, 0.04, 0.04},
 		{0.04, 0.04, 0.04, 0.04, 0.04},
 		{0.04, 0.04, 0.04, 0.04, 0.04},
 	};
-	ConvolutionCalculator::convolution(rgb_image, kernel5[0], width, height, 5, 5, bpp, output_image);
-	
+
+	float edge5_horizontal[5][5]{
+		{2, 1, 0, -1, -2},
+		{2, 1, 0, -1, -2},
+		{2, 1, 0, -1, -2},
+		{2, 1, 0, -1, -2},
+		{2, 1, 0, -1, -2},
+	};
+
+	float edge5[5][5]{
+		{0, 0, -1, 0, 0},
+		{0, -1, -2, -1, 0},
+		{-1, -2, 16, -2, -1},
+		{0, -1, -2, -1, 0},
+		{0, 0, -1, 0, 0},
+	};
+
+	struct timeval start, end, gap;
+
+	//ConvolutionCalculator::convolution_naive(rgb_image, sobel[0], width, height, 3, 3, bpp, output_image);
+
+	gettimeofday(&start, nullptr);
+	//ConvolutionCalculator::convolution_naive(rgb_image, edge[0], width, height, 3, 3, bpp, output_image);
+	gettimeofday(&end, nullptr);
+
+	getGapTime(&start, &end, &gap);
+
+	printf("gpu naive convolution time: %f\n", timevalToFloat(&gap));
+
+
+	//ConvolutionCalculator::convolution_cufft(rgb_image, edge[0], width, height, 3, 3, bpp, output_image);
+
+	gettimeofday(&start, nullptr);
+	ConvolutionCalculator::convolution_cufft(rgb_image, edge5[0], width, height, 5, 5, bpp, output_image);
+	gettimeofday(&end, nullptr);
+
+	getGapTime(&start, &end, &gap);
+
+	printf("gpu fft convolution time: %f\n", timevalToFloat(&gap));
+
+
 	stbi_image_free(rgb_image);
-	stbi_write_png("output_cufft_encapsulated.png", width, height, bpp, output_image, width * bpp);
+	stbi_write_png("output_temp.png", width, height, bpp, output_image, width * bpp);
 	
 	//for (int k = 0; k < bpp; k++)
 	//{
