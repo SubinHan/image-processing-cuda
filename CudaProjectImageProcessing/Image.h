@@ -11,30 +11,39 @@
 #endif
 
 /**
- * @brief 
+ * @brief
  * The struct Pixel represents a pixel of color images.
  * If the image is grayscale, then red, green, blue contains intensity value.
  * intensity = 0.2126 * red + 0.7152 * green + 0.0722 * blue
 */
 struct Pixel {
-    uint8_t red;
-    uint8_t green;
-    uint8_t blue;
-    uint8_t intensity;
+	uint8_t red;
+	uint8_t green;
+	uint8_t blue;
+	uint8_t intensity;
 };
 
 class Image
 {
+private:
+	uint8_t* image;
+	int width;
+	int height;
+	int bpp;
+
 public:
 	Image() = delete;
 	Image(std::string path);
-    Image(const int width, const int height);
-    ~Image();
-    int get_width();
-    int get_height();
-    Pixel get_pixel_at(int x, int y) noexcept;
-    void set_pixel_at(int x, int y, Pixel pixel) noexcept;
-    void write(std::string path);
+	~Image();
+	int get_width();
+	int get_height();
+	Pixel get_pixel_at(int x, int y);
+	void set_pixel_at(int x, int y, Pixel pixel);
+	void write(std::string path);
+
+private:
+	int get_offset(int x, int y);
+	bool is_color();
 };
 
 //Example Code:
