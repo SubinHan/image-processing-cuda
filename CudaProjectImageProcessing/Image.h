@@ -2,14 +2,6 @@
 
 #include <string>
 
-#ifndef STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION   
-#endif
-
-#ifndef STB_IMAGE_WIRTE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#endif
-
 /**
  * @brief
  * The struct Pixel represents a pixel of color images.
@@ -21,10 +13,20 @@ struct Pixel {
 	uint8_t green;
 	uint8_t blue;
 	uint8_t intensity;
+
+	Pixel(uint8_t red, uint8_t green, uint8_t blue) : red(red), green(green), blue(blue)
+	{
+		intensity = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+	}
+	Pixel(uint8_t intensity = 0) : Pixel(intensity, intensity, intensity) {}
+
 };
 
 class Image
 {
+public:
+	static constexpr int DEFAULT_INTENSITY = 0;
+
 private:
 	uint8_t* image;
 	int width;
@@ -34,16 +36,19 @@ private:
 public:
 	Image() = delete;
 	Image(std::string path);
+	Image(int width, int height, int bpp = 3);
 	~Image();
-	int get_width();
-	int get_height();
-	Pixel get_pixel_at(int x, int y);
+	int get_width() const;
+	int get_height() const;
+	Pixel get_pixel_at(int x, int y) const;
 	void set_pixel_at(int x, int y, Pixel pixel);
-	void write(std::string path);
+	void write(std::string path) const;
+	uint8_t* get_raw_data() const;
+	int get_bpp() const;
 
 private:
-	int get_offset(int x, int y);
-	bool is_color();
+	int get_offset(int x, int y) const;
+	bool is_color() const;
 };
 
 //Example Code:

@@ -1,17 +1,10 @@
 #pragma once
 
-#include "Image.h"
-#include <string>
 #include "stb_image.h"
 #include "stb_image_write.h"
 
-#ifndef STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#endif
-
-#ifndef STB_IMAGE_WRITE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION  
-#endif
+#include "Image.h"
+#include <string>
 
 Image::Image(std::string path)
 {
@@ -22,33 +15,44 @@ Image::Image(std::string path)
 	this->bpp = bpp;
 }
 
+Image::Image(int width, int height, int bpp)
+{
+	this->image = new uint8_t[width * height * bpp];
+
+	std::fill(image, image + width * height * bpp, Image::DEFAULT_INTENSITY);
+
+	this->width = width;
+	this->height = height;
+	this->bpp = bpp;
+}
+
 Image::~Image()
 {
 	free(image);
 }
 
-int Image::get_width()
+int Image::get_width() const
 {
 	return width;
 }
 
-int Image::get_height()
+int Image::get_height() const
 {
 	return height;
 }
 
-bool Image::is_color()
+bool Image::is_color() const
 {
-	return bpp == 3 || 4;
+	return bpp == 3 || bpp == 4;
 }
 
-int Image::get_offset(int x, int y)
+int Image::get_offset(int x, int y) const
 {
 	int offset = (y * width + x) * bpp;
 	return offset;
 }
 
-Pixel Image::get_pixel_at(int x, int y)
+Pixel Image::get_pixel_at(int x, int y) const
 {
 	int offset = get_offset(x, y);
 
@@ -59,9 +63,9 @@ Pixel Image::get_pixel_at(int x, int y)
 		result.red = image[offset + 0];
 		result.green = image[offset + 1];
 		result.blue = image[offset + 2];
-		result.intensity = 0.2126 * (float)result.red
-			+ 0.7152 * (float)result.green
-			+ 0.0722 * (float)result.blue;
+		result.intensity = 0.2126f * static_cast<float>(result.red)
+			+ 0.7152f * static_cast<float>(result.green)
+			+ 0.0722f * static_cast<float>(result.blue);
 		return result;
 	}
 
@@ -86,7 +90,17 @@ void Image::set_pixel_at(int x, int y, Pixel pixel)
 	image[offset] = pixel.intensity;
 }
 
-void Image::write(std::string path)
+void Image::write(std::string path) const
 {
 	stbi_write_png(path.c_str(), width, height, bpp, image, width * bpp);
+}
+
+uint8_t* Image::get_raw_data() const
+{
+	return image;
+}
+
+int Image::get_bpp() const
+{
+	return bpp;
 }
