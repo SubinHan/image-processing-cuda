@@ -147,12 +147,18 @@
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <CudaCompile Include="BrightnessOld.cu" />
     <CudaCompile Include="ConvolutionOld.cu" />
+    <CudaCompile Include="GrayscaleOld.cu" />
+    <CudaCompile Include="HsvOld.cu" />
+    <CudaCompile Include="HsvOld.cuh" />
     <CudaCompile Include="kernel.cu" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="BrightnessOld.cuh" />
     <ClInclude Include="ConvolutionOld.cuh" />
     <ClInclude Include="CudaDebug.cuh" />
+    <ClInclude Include="GrayscaleOld.cuh" />
     <ClInclude Include="HistogramEqualizer.h">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClInclude>
@@ -168,13 +174,12 @@
     <ClInclude Include="Timer.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="HistogramEqualizer.cpp" />
+    <ClCompile Include="HistogramEqualizer.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="Image.cpp" />
     <ClCompile Include="PngImage.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="PointWiseTransformer.cu">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="Timer.cpp" />
   </ItemGroup>

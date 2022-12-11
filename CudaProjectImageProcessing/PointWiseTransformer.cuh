@@ -6,11 +6,13 @@
 
 namespace PointWiseTransformer
 {
+	constexpr int COLOR_SIZE = 256;
+
 	template <typename Func>
 	Image transform(const Image image)
 	{
 		Image result(image.get_width(), image.get_height());
-		Func transformer;
+		Func transformer(image);
 		for (int y = 0; y < image.get_height(); y++)
 		{
 			for (int x = 0; x < image.get_width(); x++)

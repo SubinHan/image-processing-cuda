@@ -35,6 +35,11 @@ private:
 
 public:
 	Image() = delete;
+	Image(const Image& copy) : width(copy.width), height(copy.height), bpp(copy.bpp)
+	{
+		image = new uint8_t[width * height * bpp];
+		memcpy(image, copy.image, sizeof(uint8_t) * width * height * bpp);
+	}
 	Image(std::string path);
 	Image(int width, int height, int bpp = 3);
 	~Image();
@@ -45,6 +50,17 @@ public:
 	void write(std::string path) const;
 	uint8_t* get_raw_data() const;
 	int get_bpp() const;
+
+	Image& operator=(const Image& ref)
+	{
+		delete image;
+		width = ref.width;
+		height = ref.height;
+		bpp = ref.bpp;
+		
+		image = new uint8_t[width * height * bpp];
+		memcpy(image, ref.image, sizeof(uint8_t) * width * height * bpp);
+	}
 
 private:
 	int get_offset(int x, int y) const;

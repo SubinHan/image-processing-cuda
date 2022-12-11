@@ -28,7 +28,7 @@ Image::Image(int width, int height, int bpp)
 
 Image::~Image()
 {
-	free(image);
+	delete image;
 }
 
 int Image::get_width() const

@@ -1,13 +1,9 @@
 #pragma once
 
 #include "Image.h"
-#include "PointWiseTransformer.h"
+#include "PointWiseTransformer.cuh"
 
-class HistogramEqualizer : PointWiseTransformer
+namespace PointWiseTransformer
 {
-public:
-	Pixel transform_pixel(Pixel p);
-
-private:
-
-};
+	Image histogram_equalize_cpu(Image image);
+}
