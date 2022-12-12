@@ -46,7 +46,7 @@ void change_brightness_gpu(
     dim3 threads(256);
     dim3 grid(blocksx);
 
-    change_brightness_gpu0 << <grid, threads >> > (d_image, width, height, channel, percent);
+    change_brightness_gpu0 << <grid, threads >> > (d_image, width, height, bpp, percent);
 
     cudaMemcpy(image, d_image, buffer_size, cudaMemcpyDeviceToHost);
 

@@ -60,6 +60,8 @@ public:
 		
 		image = new uint8_t[width * height * bpp];
 		memcpy(image, ref.image, sizeof(uint8_t) * width * height * bpp);
+
+		return *this;
 	}
 
 private:

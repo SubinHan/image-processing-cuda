@@ -752,8 +752,8 @@ int main()
 	images_to_test.push_back(Image("test/64x64.png"));
 	images_to_test.push_back(Image("test/512x512.png"));
 	images_to_test.push_back(Image("test/1920x1080.jpg"));
-	images_to_test.push_back(Image("test/3840x2160.jpg"));
-	images_to_test.push_back(Image("test/7680x4320.jpg"));
+	//images_to_test.push_back(Image("test/3840x2160.jpg"));
+	//images_to_test.push_back(Image("test/7680x4320.jpg"));
 	
 	printf("Comparison: Grayscale\n");
 	perform_comparison(
@@ -792,22 +792,52 @@ int main()
 	);
 
 
-	//Image test("test/64x64.png");
+	Image test("test/512x512.png");
 
-	//float blur3[3][3]{
-	//	{0.11112, 0.11112, 0.11112},
-	//	{0.11112, 0.11112, 0.11112},
-	//	{0.1112, 0.11112, 0.11112}
-	//};
+	float blur5[5][5]{
+		{0.04, 0.04, 0.04, 0.04, 0.04},
+		{0.04, 0.04, 0.04, 0.04, 0.04},
+		{0.04, 0.04, 0.04, 0.04, 0.04},
+		{0.04, 0.04, 0.04, 0.04, 0.04},
+		{0.04, 0.04, 0.04, 0.04, 0.04},
+	};
 
-	//convolution_gpu_cufft(test.get_raw_data(),
-	//	test.get_width(),
-	//	test.get_height(),
-	//	blur3[0],
-	//	3,
-	//	test.get_bpp(),
-	//	test.get_raw_data()
-	//);
+	float edge3[3][3]{
+		{-1, -2, -1},
+		{-2, 12, -2},
+		{-1, -2, -1},
+	};
 
-	//test.write("output_blur.png");
+	float edge5[5][5]{
+		{0, 0, -1, 0, 0},
+		{0, -1, -2, -1, 0},
+		{-1, -2, 16, -2, -1},
+		{0, -1, -2, -1, 0},
+		{0, 0, -1, 0, 0},
+	};
+
+	convolution_gpu_cufft(test.get_raw_data(),
+		test.get_width(),
+		test.get_height(),
+		blur5[0],
+		5,
+		test.get_bpp(),
+		test.get_raw_data()
+	);
+	test.write("output_blur.png");
+
+	test = Image("test/512x512.png");
+
+	convolution_gpu_cufft(test.get_raw_data(),
+		test.get_width(),
+		test.get_height(),
+		edge3[0],
+		3,
+		test.get_bpp(),
+		test.get_raw_data()
+	);
+
+	test.write("output_edge.png");
+
+
 }

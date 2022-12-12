@@ -31,11 +31,9 @@ void extract_color_cpu(
 
         const double delta = max - min;
 
-       double v = max * 100.0;
-
-       double h;
-        if (max == min)  //색상(Hue) 0 ~ 360, fmod(double a, double b) -> a % b 의 결과
-            h = 0;
+        double h;
+        if (max == min)  //색상(Hue) 0 ~ 360
+            h = 0;       //fmod(double a, double b) -> a % b 의 결과
         else if (max == r)
             h = fmod((60 * ((g - b) / delta) + 360), 360.0);
         else if (max == g)
@@ -45,12 +43,15 @@ void extract_color_cpu(
 
         double s;
         if (max == 0) //채도(Saturation) 0 ~ 100,  100에 가까울수록 원색
-            s = 0;
+            s = 0.0;
         else
             s = delta / max * 100.0;
 
         if ((h > 30.0 && h < 330.0) || s < 10) {
-            double gray = 0.2126 * image[p * bpp] + 0.7152 * image[p * bpp + 1] + 0.0722 * image[p * bpp + 2];
+            double gray = 
+                0.2126 * image[p * bpp]
+                + 0.7152 * image[p * bpp + 1]
+                + 0.0722 * image[p * bpp + 2];
             red[p * bpp + 0] = (int)gray;
             red[p * bpp + 1] = (int)gray;
             red[p * bpp + 2] = (int)gray;
@@ -62,6 +63,7 @@ void extract_color_cpu(
             red[p * bpp + 2] = image[p * bpp + 2];
         }
 
+        // not green
         if ((h > 150.0 || h < 90.0) || s < 10) {
             double gray = 0.2126 * image[p * bpp] + 0.7152 * image[p * bpp + 1] + 0.0722 * image[p * bpp + 2];
             green[p * bpp + 0] = (int)gray;
@@ -75,6 +77,7 @@ void extract_color_cpu(
             green[p * bpp + 2] = image[p * bpp + 2];
         }
 
+        // not blue
         if ((h > 270.0 || h < 180.0) || s < 10) {
             double gray = 0.2126 * image[p * bpp] + 0.7152 * image[p * bpp + 1] + 0.0722 * image[p * bpp + 2];
             blue[p * bpp + 0] = (int)gray;
